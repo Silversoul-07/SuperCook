@@ -1,22 +1,101 @@
 // src/pages/RecipePage.tsx
 import React from "react"
 import { useParams, Link, useNavigate } from "react-router-dom"
-import { RECIPES } from "../lib/recipes-data"
 import { cn } from "../lib/utils"
+import useSWR from "swr"
+import {type Recipe} from "@/types"
+ 
+// fetcher for SWR that surfaces HTTP status
+const fetcher = async (url: string) => {
+  const res = await fetch(url)
+  if (!res.ok) {
+    const err: any = new Error("Fetch error")
+    err.status = res.status
+    try {
+      err.info = await res.json()
+    } catch {}
+    throw err
+  }
+  return res.json()
+}
+
+function isString(v: any): v is string {
+  return typeof v === "string"
+}
+function isNumber(v: any): v is number {
+  return typeof v === "number" && Number.isFinite(v)
+}
+function isStringArray(v: any): v is string[] {
+  return Array.isArray(v) && v.every(isString)
+}
+
+function isRecipe(obj: any): obj is Recipe {
+  if (!obj || typeof obj !== "object") return false
+  if (!isString(obj._id)) return false
+  if (!isString(obj.title) || !isString(obj.description)) return false
+  if (!isString(obj.image) || !isString(obj.cuisine)) return false
+  if (!Array.isArray(obj.ingredients)) return false
+  if (!obj.ingredients.every((it: any) =>
+    it && isString(it.name) && isNumber(it.quantity) && isString(it.unit) &&
+    (it.optional === undefined || typeof it.optional === "boolean") &&
+    (it.substitutes === undefined || isStringArray(it.substitutes))
+  )) return false
+  if (!Array.isArray(obj.instructions) || !obj.instructions.every(isString)) return false
+  if (!isNumber(obj.servings) || !isNumber(obj.cookTimeMinutes)) return false
+  if (obj.prepTimeMinutes !== undefined && !isNumber(obj.prepTimeMinutes)) return false
+  if (!["easy", "medium", "hard"].includes(obj.difficulty)) return false
+  const allowedDiet = ["vegetarian","vegan","gluten-free","dairy-free","nut-free","halal","kosher"]
+  if (!Array.isArray(obj.dietary) || !obj.dietary.every((d: any) => allowedDiet.includes(d))) return false
+  if (!obj.nutritionPerServing || !isNumber(obj.nutritionPerServing.calories) || !isNumber(obj.nutritionPerServing.protein) || !isNumber(obj.nutritionPerServing.fat) || !isNumber(obj.nutritionPerServing.carbs)) return false
+  if (obj.ratings !== undefined) {
+    if (!isNumber(obj.ratings.avg) || !isNumber(obj.ratings.count)) return false
+  }
+  if (obj.tags !== undefined && !isStringArray(obj.tags)) return false
+  return true
+}
 
 export default function RecipePage() {
   const { id } = useParams<{ id: string }>()
-  const navigate = useNavigate()
 
-  const recipe = RECIPES.find((r) => r.id === id)
+  // use SWR to fetch the recipe by id
+  const { data } = useSWR(id ? `/api/recipes/${id}` : null, fetcher, { suspense: true })
 
-  if (!recipe) {
-    // Replace `notFound()` with navigation
-    React.useEffect(() => {
-      navigate("/404", { replace: true })
-    }, [navigate])
-    return null
+  // servings state must be declared unconditionally (Rules of Hooks)
+  const [servings, setServings] = React.useState<number>(1)
+
+  // initialize servings from fetched recipe once validated
+  React.useEffect(() => {
+    if (!data || !data.recipe) return
+    try {
+      const maybeRecipe = data.recipe
+      if (isRecipe(maybeRecipe)) {
+        const base = maybeRecipe.servings || 1
+        setServings((prev) => (prev !== base ? base : prev))
+      }
+    } catch {
+      // no-op
+    }
+  }, [data])
+
+  if (!data) {
+    // simple loading state while fetching
+    return <main className="mx-auto max-w-5xl px-4 py-6">Loading...</main>
   }
+
+  const recipeRaw = data.recipe
+
+  if (!isRecipe(recipeRaw)) {
+    console.error("Fetched recipe does not match expected shape:", recipeRaw)
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+          Invalid recipe data received from server.
+        </div>
+      </main>
+    )
+  }
+
+  const recipe = recipeRaw
 
   return (
     <main>
@@ -55,7 +134,7 @@ export default function RecipePage() {
                 <span className="rounded-full bg-secondary px-2 py-1 text-secondary-foreground">
                   {recipe.cookTimeMinutes} min
                 </span>
-                {recipe?.dietary?.slice(0, 4).map((d) => (
+                {recipe?.dietary?.slice(0, 4).map((d: string) => (
                   <span key={d} className="rounded-full bg-secondary px-2 py-1 text-secondary-foreground">
                     {d}
                   </span>
@@ -81,7 +160,7 @@ export default function RecipePage() {
 
           <p className="mt-2 text-sm text-muted-foreground">
             Avg. calories per serving:{" "}
-            <span className="font-medium">{recipe.calories} kcal</span>
+            <span className="font-medium">{recipe.nutritionPerServing.calories} kcal</span>
           </p>
         </div>
       </header>
@@ -90,14 +169,22 @@ export default function RecipePage() {
         <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
           {/* Main column */}
           <div className="space-y-6 md:col-span-2">
-            <ServingSize caloriesPerServing={recipe.calories} />
-            <IngredientsList ingredients={recipe.ingredients} />
-            <Instructions cookTimeMinutes={recipe.cookTimeMinutes} />
+            <ServingSize
+              caloriesPerServing={recipe.nutritionPerServing.calories}
+              servings={servings}
+              setServings={setServings}
+            />
+            <IngredientsList
+              ingredients={recipe.ingredients}
+              servings={servings}
+              baseServings={recipe.servings || 1}
+            />
+            <Instructions cookTimeMinutes={recipe.cookTimeMinutes} steps={recipe.instructions} />
           </div>
-
+ 
           {/* Sidebar */}
           <aside className="space-y-6">
-            <NutritionCard caloriesPerServing={recipe.calories} />
+            <NutritionCard nutritionPerServing={recipe.nutritionPerServing} servings={servings} />
             <Substitutions />
           </aside>
         </div>
@@ -127,30 +214,41 @@ function SectionCard({
   )
 }
 
-function NutritionCard({ caloriesPerServing }: { caloriesPerServing: number }) {
+function NutritionCard({ nutritionPerServing, servings }: { nutritionPerServing: { calories: number; protein: number; fat: number; carbs: number }; servings: number }) {
+  const totals = {
+    calories: nutritionPerServing.calories * servings,
+    protein: nutritionPerServing.protein * servings,
+    carbs: nutritionPerServing.carbs * servings,
+    fat: nutritionPerServing.fat * servings,
+  }
+  const fmt = (n: number) => (Math.abs(n - Math.round(n)) < 1e-6 ? String(Math.round(n)) : String(parseFloat(n.toFixed(2))))
   return (
     <SectionCard title="Nutritional Information">
       <table className="w-full text-sm">
         <tbody>
           <tr className="border-b border-border/70">
             <td className="py-2 text-muted-foreground">{"Calories (per serving)"}</td>
-            <td className="py-2 text-right font-medium">{caloriesPerServing} kcal</td>
+            <td className="py-2 text-right font-medium">{nutritionPerServing.calories} kcal</td>
           </tr>
           <tr className="border-b border-border/70">
-            <td className="py-2 text-muted-foreground">{"Protein"}</td>
-            <td className="py-2 text-right font-medium">{"—"}</td>
+            <td className="py-2 text-muted-foreground">{"Calories (total)"}</td>
+            <td className="py-2 text-right font-medium">{fmt(totals.calories)} kcal</td>
           </tr>
           <tr className="border-b border-border/70">
-            <td className="py-2 text-muted-foreground">{"Carbohydrates"}</td>
-            <td className="py-2 text-right font-medium">{"—"}</td>
+            <td className="py-2 text-muted-foreground">{"Protein (total)"}</td>
+            <td className="py-2 text-right font-medium">{fmt(totals.protein)} g</td>
+          </tr>
+          <tr className="border-b border-border/70">
+            <td className="py-2 text-muted-foreground">{"Carbohydrates (total)"}</td>
+            <td className="py-2 text-right font-medium">{fmt(totals.carbs)} g</td>
           </tr>
           <tr>
-            <td className="py-2 text-muted-foreground">{"Fat"}</td>
-            <td className="py-2 text-right font-medium">{"—"}</td>
+            <td className="py-2 text-muted-foreground">{"Fat (total)"}</td>
+            <td className="py-2 text-right font-medium">{fmt(totals.fat)} g</td>
           </tr>
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-muted-foreground">{"Macros are illustrative; add real values when available."}</p>
+      <p className="mt-2 text-xs text-muted-foreground">{"Per-serving and total nutrition are shown; totals scale with servings."}</p>
     </SectionCard>
   )
 }
@@ -184,7 +282,15 @@ function useIsClient() {
   return isClient
 }
 
-function ServingSize({ caloriesPerServing }: { caloriesPerServing: number }) {
+function ServingSize({
+  caloriesPerServing,
+  servings,
+  setServings,
+}: {
+  caloriesPerServing: number
+  servings: number
+  setServings: (n: number) => void
+}) {
   const isClient = useIsClient()
   if (!isClient)
     return (
@@ -192,10 +298,18 @@ function ServingSize({ caloriesPerServing }: { caloriesPerServing: number }) {
         <div className="h-16 animate-pulse rounded-md bg-muted" />
       </SectionCard>
     )
-  return <ServingSizeClient caloriesPerServing={caloriesPerServing} />
+  return <ServingSizeClient caloriesPerServing={caloriesPerServing} servings={servings} setServings={setServings} />
 }
 
-function IngredientsList({ ingredients }: { ingredients: string[] }) {
+function IngredientsList({
+  ingredients,
+  servings,
+  baseServings,
+}: {
+  ingredients: { name: string; quantity: number; unit: string; optional?: boolean }[]
+  servings: number
+  baseServings: number
+}) {
   const isClient = useIsClient()
   if (!isClient)
     return (
@@ -203,10 +317,10 @@ function IngredientsList({ ingredients }: { ingredients: string[] }) {
         <div className="h-40 animate-pulse rounded-md bg-muted" />
       </SectionCard>
     )
-  return <IngredientsClient ingredients={ingredients} />
+  return <IngredientsClient ingredients={ingredients} servings={servings} baseServings={baseServings} />
 }
 
-function Instructions({ cookTimeMinutes }: { cookTimeMinutes: number }) {
+function Instructions({ cookTimeMinutes, steps }: { cookTimeMinutes: number; steps: string[] }) {
   const isClient = useIsClient()
   if (!isClient)
     return (
@@ -214,11 +328,18 @@ function Instructions({ cookTimeMinutes }: { cookTimeMinutes: number }) {
         <div className="h-32 animate-pulse rounded-md bg-muted" />
       </SectionCard>
     )
-  return <InstructionsClient cookTimeMinutes={cookTimeMinutes} />
+  return <InstructionsClient cookTimeMinutes={cookTimeMinutes} steps={steps} />
 }
 
-function ServingSizeClient({ caloriesPerServing }: { caloriesPerServing: number }) {
-  const [servings, setServings] = React.useState(1)
+function ServingSizeClient({
+  caloriesPerServing,
+  servings,
+  setServings,
+}: {
+  caloriesPerServing: number
+  servings: number
+  setServings: (n: number) => void
+}) {
   const [mode, setMode] = React.useState<"per" | "total">("per")
   const calories = mode === "per" ? caloriesPerServing : servings * caloriesPerServing
 
@@ -289,61 +410,81 @@ function ServingSizeClient({ caloriesPerServing }: { caloriesPerServing: number 
   )
 }
 
-function IngredientsClient({ ingredients }: { ingredients: string[] }) {
+function IngredientsClient({
+  ingredients,
+  servings,
+  baseServings,
+}: {
+  ingredients: { name: string; quantity: number; unit: string; optional?: boolean }[]
+  servings: number
+  baseServings: number
+}) {
   const [checked, setChecked] = React.useState<Record<string, boolean>>({})
+  const ratio = servings / (baseServings || 1)
+  const fmt = (n: number) => {
+    if (Math.abs(n - Math.round(n)) < 1e-6) return String(Math.round(n))
+    return String(parseFloat(n.toFixed(2)))
+  }
   return (
     <SectionCard title="Ingredients">
       <ul className="space-y-2">
-        {ingredients.map((ing) => (
-          <li key={ing} className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={!!checked[ing]}
-              onChange={(e) => setChecked((s) => ({ ...s, [ing]: e.target.checked }))}
-              aria-label={`Mark ${ing} as added`}
-            />
-            <span>{ing}</span>
-          </li>
-        ))}
+        {ingredients.map((ing) => {
+          const scaled = ing.quantity * ratio
+          const label = `${fmt(scaled)} ${ing.unit} ${ing.name}${ing.optional ? " (optional)" : ""}`
+          return (
+            <li key={ing.name} className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={!!checked[ing.name]}
+                onChange={(e) => setChecked((s) => ({ ...s, [ing.name]: e.target.checked }))}
+                aria-label={`Mark ${label} as added`}
+              />
+              <span>{label}</span>
+            </li>
+          )
+        })}
       </ul>
     </SectionCard>
   )
 }
 
-function InstructionsClient({ cookTimeMinutes }: { cookTimeMinutes: number }) {
-  const steps = [
-    "Prepare all ingredients and tools.",
-    "Start cooking according to recipe method.",
-    `Simmer/cook for about ${cookTimeMinutes} minutes as needed.`,
-    "Taste and adjust seasoning.",
-    "Plate and serve.",
-  ]
-  const [active, setActive] = React.useState<number | null>(null)
-  const [done, setDone] = React.useState<Record<number, boolean>>({})
-
-  return (
-    <SectionCard title="Step-by-step Instructions">
-      <ol className="space-y-3">
-        {steps.map((s, i) => {
-          const idx = i + 1
-          const isActive = active === idx
-          const isDone = !!done[idx]
-          return (
-            <li
-              key={idx}
-              className={cn(
-                "flex items-start gap-3 rounded-md border border-border px-3 py-2",
-                isActive && "ring-2 ring-ring/40",
-              )}
-            >
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={isDone}
-                onChange={(e) => setDone((d) => ({ ...d, [idx]: e.target.checked }))}
-                aria-label={`Mark step ${idx} as done`}
-              />
-              <div className="flex-1">
+function InstructionsClient({ cookTimeMinutes, steps }: { cookTimeMinutes: number; steps?: string[] }) {
+   const provided = Array.isArray(steps) && steps.length > 0
+   const displaySteps = provided
+     ? (steps as string[])
+     : [
+         "Prepare all ingredients and tools.",
+         "Start cooking according to recipe method.",
+         `Simmer/cook for about ${cookTimeMinutes} minutes as needed.`,
+         "Taste and adjust seasoning.",
+         "Plate and serve.",
+       ]
+   const [active, setActive] = React.useState<number | null>(null)
+   const [done, setDone] = React.useState<Record<number, boolean>>({})
+ 
+   return (
+     <SectionCard title="Step-by-step Instructions">
+       <ol className="space-y-3">
+        {displaySteps.map((s, i) => {
+           const idx = i + 1
+           const isActive = active === idx
+           const isDone = !!done[idx]
+           return (
+             <li
+               key={idx}
+               className={cn(
+                 "flex items-start gap-3 rounded-md border border-border px-3 py-2",
+                 isActive && "ring-2 ring-ring/40",
+               )}
+             >
+               <input
+                 type="checkbox"
+                 className="mt-1"
+                 checked={isDone}
+                 onChange={(e) => setDone((d) => ({ ...d, [idx]: e.target.checked }))}
+                 aria-label={`Mark step ${idx} as done`}
+               />
+               <div className="flex-1">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">{`Step ${idx}`}</span>
                   <button
@@ -364,3 +505,4 @@ function InstructionsClient({ cookTimeMinutes }: { cookTimeMinutes: number }) {
     </SectionCard>
   )
 }
+
