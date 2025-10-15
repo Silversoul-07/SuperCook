@@ -12,17 +12,41 @@ interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
 
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [theme, setTheme] = useState<Theme>(
-    (localStorage.getItem("theme") as Theme) || "light"
-  )
+  const [theme, setTheme] = useState<Theme>(() => {
+    // Initialize theme from localStorage or system preference
+    try {
+      const stored = typeof window !== "undefined" ? localStorage.getItem("theme") : null
+      if (stored === "light" || stored === "dark") {
+        return stored
+      }
+    } catch {
+      // ignore localStorage errors
+    }
+
+    // fallback: prefers-color-scheme
+    try {
+      const prefersDark =
+        typeof window !== "undefined" &&
+        window.matchMedia &&
+        window.matchMedia("(prefers-color-scheme: dark)").matches
+      return prefersDark ? "dark" : "light"
+    } catch {
+      return "light"
+    }
+  })
 
   useEffect(() => {
+    // Apply theme class and persist selection
     document.documentElement.classList.remove("light", "dark")
     document.documentElement.classList.add(theme)
-    localStorage.setItem("theme", theme)
+    try {
+      localStorage.setItem("theme", theme)
+    } catch {
+      // ignore
+    }
   }, [theme])
 
-  const toggleTheme = () => setTheme(theme === "light" ? "dark" : "light")
+  const toggleTheme = () => setTheme((t) => (t === "light" ? "dark" : "light"))
 
   return (
     <ThemeContext.Provider value={{ theme, setTheme, toggleTheme }}>
@@ -36,3 +60,4 @@ export const useTheme = () => {
   if (!ctx) throw new Error("useTheme must be used inside ThemeProvider")
   return ctx
 }
+  

@@ -6,11 +6,13 @@ export function SearchBar({
   onAddTerm,
   onRemoveTerm,
   onClearAll,
+  onSearch,
 }: {
   terms: string[]
   onAddTerm: (term: string) => void
   onRemoveTerm: (term: string) => void
   onClearAll: () => void
+  onSearch: () => void
 }) {
   const [value, setValue] = React.useState("")
 
@@ -42,20 +44,7 @@ export function SearchBar({
           onKeyDown={onKeyDown}
           aria-label="Recipe search"
         />
-        <button
-          type="button"
-          onClick={() => {
-            if (value.trim()) {
-              onAddTerm(value)
-              setValue("")
-            }
-          }}
-          className="inline-flex h-9 items-center rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90"
-          aria-label="Add search term"
-          title="Add"
-        >
-          {"Add"}
-        </button>
+
       </div>
 
       {terms.length > 0 && (

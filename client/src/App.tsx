@@ -6,6 +6,8 @@ import { FilterSidebar, type RecipeFilters } from "@/components/filters"
 import { RecipeCard } from "@/components/recipe-card"
 import UploadIngredientsDialog from "@/components/UploadIngredientsDialog"
 import {type Recipe} from "@/types"
+import { useTheme } from "@/components/theme-provider"
+import { Button } from "./components/ui/button"
 
 function isIngredient(obj: any): boolean {
   return (
@@ -82,6 +84,21 @@ const fetcher = async (_key: string, payload: SearchPayload) => {
   return { recipes: normalized as Recipe[] }
 }
 
+// small consumer component that must live inside ThemeProvider
+function ThemeToggleButton() {
+  const { theme, toggleTheme } = useTheme()
+  return (
+    <button
+      type="button"
+      aria-label="Toggle color theme"
+      onClick={toggleTheme}
+      className="rounded-md border px-3 py-1 text-sm hover:bg-accent/50"
+    >
+      {theme === "dark" ? "Switch to Light" : "Switch to Dark"}
+    </button>
+  )
+}
+
 export default function App() {
   const [terms, setTerms] = React.useState<string[]>([])
   const [filters, setFilters] = React.useState<RecipeFilters>({
@@ -94,13 +111,10 @@ export default function App() {
     cuisines: [],
   })
 
-  // Add generation state to avoid repeated calls
   const [generating, setGenerating] = React.useState(false)
-  const [generatedOnce, setGeneratedOnce] = React.useState(false)
 
   const payload: SearchPayload = React.useMemo(() => ({ terms, filters }), [terms, filters])
 
-  // Tell SWR the data shape for better typing
   const { data, error, isLoading, mutate } = useSWR<{ recipes: Recipe[] }, Error>(
     ["recipes-search", payload],
     ([key, p]) => fetcher(key, p),
@@ -110,90 +124,26 @@ export default function App() {
     }
   )
 
-  // Trigger generation when there are zero recipes (only once per query)
-  React.useEffect(() => {
-    if (isLoading || error) return
-    if (generatedOnce) return
-    if (!data) return
-    if (Array.isArray(data.recipes) && data.recipes.length === 0) {
-      setGenerating(true)
-      // request server to generate N recipes (adjust n as you prefer)
-      const n = 1
-
-      async function sendGenerateRequest(n: number) {
-        const candidates = [
-          "/api/generate-recipes", // relative (works when dev proxy or same origin)
-          "http://localhost:5000/api/generate-recipes", // common backend fallback
-        ]
-
-        for (const url of candidates) {
-          try {
-            console.log(`Attempting recipe generation POST -> ${url}`)
-            const res = await fetch(url, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ n }),
-            })
-            if (!res.ok) {
-              const txt = await res.text().catch(() => "<no body>")
-              console.warn(`Generate endpoint at ${url} returned ${res.status}:`, txt)
-              continue
-            }
-            const json = await res.json().catch((e) => {
-              console.warn("Failed to parse JSON from generate response:", e)
-              return null
-            })
-            return json
-          } catch (err) {
-            console.warn(`Network error when POSTing to ${url}:`, err)
-            // try next candidate
-          }
-        }
-        return null
-      }
-      ;(async () => {
-        try {
-          console.log("Requesting generation of recipes...")
-          const body = await sendGenerateRequest(n)
-          if (!body) {
-            console.error("All generation attempts failed or returned no usable response")
-            return
-          }
-          // server returns { recipes: [...] } — validate
-          if (body && Array.isArray(body.recipes) && isRecipeArray(body.recipes)) {
-            // normalize ids to _id if necessary
-            const normalized = body.recipes.map((r: any) => (!r._id && r.id ? { ...r, _id: r.id } : r))
-            // update SWR cache so UI shows generated recipes
-            await mutate({ recipes: normalized }, false)
-          } else if (Array.isArray(body.recipes)) {
-            // try to coerce items that look like recipes
-            const coerced = body.recipes.map((r: any) => (!r._id && r.id ? { ...r, _id: r.id } : r))
-            await mutate({ recipes: coerced }, false)
-          } else if (Array.isArray(body)) {
-            // in case older server returned raw array
-            const coerced = body.map((r: any) => (!r._id && r.id ? { ...r, _id: r.id } : r))
-            await mutate({ recipes: coerced }, false)
-          } else {
-            console.warn("Generate endpoint returned unexpected shape:", body)
-          }
-        } catch (e) {
-          console.error("Failed to generate recipes:", e)
-        } finally {
-          setGenerating(false)
-          setGeneratedOnce(true)
-        }
-      })()
+  const handleGenerate = async () => {
+    setGenerating(true)
+    try {
+      await mutate()
+    } finally {
+      setGenerating(false)
     }
-  }, [data, isLoading, error, mutate, generatedOnce])
+  }
 
   return (
     <main className="min-h-dvh">
-      <header className="border-b border-border bg-card">
+      <header className="border-b border-border bg-card relative">
         <div className="mx-auto max-w-6xl px-4 py-6">
           <h1 className="text-pretty text-2xl font-semibold">Generate Recipes</h1>
           <p className="mt-1 text-muted-foreground">Search and filter ingredients just like shopping for products.</p>
+          <div className="absolute top-4 right-4">
+            <ThemeToggleButton />
+          </div>
           <div className="mt-4 flex items-center gap-4">
-            <div className="flex-1">
+            <div className="flex-1 relative">
               <SearchBar
                 terms={terms}
                 onAddTerm={(t) => {
@@ -204,20 +154,25 @@ export default function App() {
                 onRemoveTerm={(term) => setTerms((prev) => prev.filter((t) => t !== term))}
                 onClearAll={() => setTerms([])}
               />
+              <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+                <UploadIngredientsDialog
+                  onAdd={(name) => {
+                    const term = name.toLowerCase()
+                    setTerms((prev) => (prev.includes(term) ? prev : [...prev, term]))
+                  }}
+                >
+                </UploadIngredientsDialog>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
-              <UploadIngredientsDialog onAdd={(name) => {
-                const term = name.toLowerCase()
-                setTerms((prev) => (prev.includes(term) ? prev : [...prev, term]))
-              }} />
-            </div>
+            <Button onClick={handleGenerate}>
+              {generating ? "Generating..." : "Generate Recipes"}
+            </Button>
           </div>
         </div>
       </header>
 
       <section className="mx-auto max-w-6xl px-4 py-6">
         <div className="grid grid-cols-1 gap-6 md:grid-cols-4">
-          {/* Sidebar */}
           <aside className="md:col-span-1">
             <div className="rounded-lg border border-border bg-card p-4">
               <h2 className="text-lg font-medium">Filters</h2>
@@ -226,15 +181,14 @@ export default function App() {
             </div>
           </aside>
 
-          {/* Results */}
           <div className="md:col-span-3">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm text-muted-foreground">
                 {isLoading
                   ? "Loading recipes..."
                   : error
-                    ? "Error loading recipes."
-                    : `${data?.recipes?.length ?? 0} recipes`}
+                  ? "Error loading recipes."
+                  : `${data?.recipes?.length ?? 0} recipes`}
               </p>
               {terms.length > 0 ? (
                 <p className="text-sm text-muted-foreground">
@@ -246,16 +200,9 @@ export default function App() {
             </div>
 
             <div className={cn("grid gap-4 sm:grid-cols-2 lg:grid-cols-3")}>
-                {/* uploaded/recognized ingredients panel removed - uploads add terms directly to the search */}
-              {/* If no results, trigger generation and show a generating message */}
               {!isLoading && !error && data?.recipes?.length === 0 && (
                 <div className="col-span-full rounded-md border border-border bg-card p-6 text-center">
-                  <p className="text-sm text-muted-foreground">Generating recipes, please wait...</p>
-                  <div className="mt-4 grid grid-cols-3 gap-4">
-                    <div className="h-[180px] animate-pulse rounded-lg bg-muted" />
-                    <div className="h-[180px] animate-pulse rounded-lg bg-muted" />
-                    <div className="h-[180px] animate-pulse rounded-lg bg-muted" />
-                  </div>
+                  <p className="text-sm text-muted-foreground">No recipes found. Try generating new ones.</p>
                 </div>
               )}
 

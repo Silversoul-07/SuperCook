@@ -1,5 +1,6 @@
 import React from 'react'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from '@/components/ui/dialog'
+import { UploadIcon } from 'lucide-react'
 
 type Props = {
   onAdd: (name: string) => void
@@ -37,11 +38,69 @@ export function UploadIngredientsDialog({ onAdd }: Props) {
     }
   }
 
-  function onRecognizeNow() {
+  async function detectIngredient(file: File): Promise<string | null> {
+    const apiKey = import.meta.env.VITE_ROBOFLOW_API_KEY;
+    if (!apiKey) {
+      console.warn("ROBOFLOW_API_KEY is not set. Using mock recognition.")
+      return recognize(file)
+    }
+    const url = "https://serverless.roboflow.com/food-ingredients-dataset/3"
+
+    try {
+      const base64Image = await fileToBase64(file)
+      const response = await fetch(`${url}?api_key=${apiKey}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: base64Image,
+      })
+
+      if (!response.ok) {
+        console.error("Failed to detect ingredient:", response.statusText)
+        return null
+      }
+
+      const data = await response.json()
+      console.log("Detection response:", data)
+
+      // Extract the most confident prediction
+      const predictions = data.predictions || []
+      if (predictions.length > 0) {
+        const topPrediction = predictions.reduce((best, current) =>
+          current.confidence > best.confidence ? current : best
+        )
+        return topPrediction.class // Return the detected class (ingredient name)
+      }
+
+      return null
+    } catch (error) {
+      console.error("Error during ingredient detection:", error)
+      return null
+    }
+  }
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const base64String = (reader.result as string).split(",")[1] // Extract base64 content
+        resolve(base64String)
+      }
+      reader.onerror = (err) => reject(err)
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function onRecognizeNow() {
     const f = files[index]
     if (!f) return
-    const r = recognize(f)
-    setRecognized(r)
+    const detectedIngredient = await detectIngredient(f)
+    if (detectedIngredient) {
+      setRecognized(detectedIngredient)
+    } else {
+      console.warn("No ingredient detected.")
+    }
   }
 
   function onAccept() {
@@ -57,7 +116,8 @@ export function UploadIngredientsDialog({ onAdd }: Props) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <button className="inline-flex items-center rounded-md bg-black px-3 py-2 text-sm font-medium text-white">Upload images</button>
+       <UploadIcon className="h-5 w-5 cursor-pointer text-muted-foreground hover:text-foreground" />
+          
       </DialogTrigger>
 
       <DialogContent>

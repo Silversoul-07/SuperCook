@@ -1,5 +1,17 @@
 import dotenv from 'dotenv'
-dotenv.config()
+//print current working directory
+console.log("Current working directory:", process.cwd())
+//check if .env file exists in current directory
+import fs from 'fs'
+if (fs.existsSync('./.env')) {
+  console.log(".env file found")
+} else {
+  console.log("No .env file found")
+}
+// load .env from project root (two levels up from server/)
+dotenv.config({ path: './.env' })
+
+console.log("Environment:", process.env.MONGO_URI ? "Using .env file" : "No .env file, using defaults")
 
 import express from "express"
 import cors from "cors"
@@ -101,15 +113,14 @@ app.post("/api/recipes", async (req: express.Request, res: express.Response) => 
   const body = req.body
   const terms: string[] = Array.isArray(body?.terms) ? body.terms : []
   const filters = body?.filters ?? {}
-  console.log("Search request:", { terms, filters })
+  const generateIfEmpty = body?.generateIfEmpty ?? true // Flag to control generation
+  console.log("Search request:", { terms, filters, generateIfEmpty })
 
   if (!recipesCollection) {
     return res.status(500).json({ error: "Database not initialized" })
   }
 
   try {
-    // For simplicity fetch documents and apply existing in-memory filters.
-    // If your collection is large, consider building a MongoDB query instead.
     const docs = await recipesCollection.find({}).toArray()
     const results = docs.filter((r: any) => {
       const termOk = matchesTerms([r.title, r.description, (r.ingredients || []).join(" ")], terms)
@@ -121,7 +132,75 @@ app.post("/api/recipes", async (req: express.Request, res: express.Response) => 
       return termOk && timeOk && diffOk && dietOk && calOk && cuiOk
     })
 
-    res.json({ recipes: results })
+    if (results.length > 0 || !generateIfEmpty) {
+      return res.json({ recipes: results })
+    }
+
+    // Generate recipes if no matches are found and `generateIfEmpty` is true
+    console.log("No matching recipes found. Generating new recipes...")
+
+    const ingredients = extractIngredientNamesFromDocs(docs)
+    const existing_recipes = extractExistingTitles(docs)
+
+    const context_message = [
+      "You are a recipe generation engine.",
+      `We provide the following available ingredients :\n${JSON.stringify(ingredients)}`,
+      "We already have these recipes in our dataset (do not duplicate or produce near-identical recipes):",
+      `${JSON.stringify(existing_recipes)}`,
+      "Please generate exactly 1 new, distinct recipe that can be prepared using some subset of the available ingredients.",
+      "Each returned item must strictly follow the provided JSON schema named 'Recipe' (fields, types), and must include realistic quantities, servings, cook/prep times, difficulty (easy|medium|hard), dietary tags where applicable, and nutritionPerServing.",
+      "Return the result as a JSON array of Recipe objects (no extra text).",
+    ].join("\n\n")
+
+    let parsedAny: any
+    try {
+      parsedAny = await callGenerativeModel(context_message, 1)
+    } catch (err: any) {
+      console.error("Model call failed:", err)
+      return res.status(502).json({ error: "Model call failed", detail: String(err) })
+    }
+
+    console.log("Model raw output:", typeof parsedAny, parsedAny)
+
+    const parsedArray: any[] = Array.isArray(parsedAny)
+      ? parsedAny
+      : parsedAny && typeof parsedAny === "object"
+      ? [parsedAny]
+      : []
+
+    const validated = parsedArray.map((p: any) => {
+      return {
+        _raw: p,
+        ok: !!p?.title && Array.isArray(p?.ingredients),
+      }
+    })
+
+    try {
+      const count = parsedArray.length
+      if (count > 0) {
+        const existingCount = await recipesCollection.countDocuments()
+        const start = existingCount + 1
+
+        const docsToInsert = parsedArray.map((p: any, i: number) => {
+          const doc: any = { ...p }
+          delete doc._id
+          delete doc.id
+          const numId = start + i
+          doc.id = numId
+          doc._id = String(numId)
+          return doc
+        })
+
+        const insertResult = await recipesCollection.insertMany(docsToInsert, { ordered: false })
+        console.log("Inserted generated recipes:", insertResult.insertedCount)
+        parsedAny = docsToInsert
+      }
+    } catch (err: any) {
+      console.error("Failed to insert generated recipes into DB:", err)
+    }
+
+    const responseRecipes = Array.isArray(parsedAny) && parsedAny.length > 0 ? parsedAny : parsedArray
+    res.json({ recipes: responseRecipes, validationSummary: validated })
   } catch (err) {
     console.error("Error fetching recipes:", err)
     res.status(500).json({ error: "Failed to fetch recipes" })
@@ -178,11 +257,11 @@ function extractExistingTitles(docs: any[]): string[] {
 }
 
 // minimal Gemini-only model caller using @google/genai
-async function callGenerativeModel(prompt: string, n = 1): Promise<string> {
-  const apiKey = process.env.GENAI_API_KEY || "AIzaSyABLzG0PzellKVq72gV2DWk_4To0v_T2uM"
-  const model = process.env.GENAI_MODEL || "gemini-2.5-flash"
+async function callGenerativeModel(prompt: string, n = 1): Promise<object> {
+  const apiKey = process.env.GEMINI_API_KEY || "AIzaSyABLzG0PzellKVq72gV2DWk_4To0v_T2uM"
+  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash"
 
-  if (!apiKey) throw new Error("Missing GENAI_API_KEY env var")
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY env var")
 
   const ai = new GoogleGenAI({ apiKey })
 
@@ -310,7 +389,7 @@ async function callGenerativeModel(prompt: string, n = 1): Promise<string> {
   })
 
   // preferred text field per example; fallback to JSON stringify
-  return (response as any).text ?? JSON.stringify(response)
+  return JSON.parse(response.text || "[]")
 }
 
 // New endpoint: generate recipes
@@ -339,35 +418,24 @@ app.post("/api/generate-recipes", async (req: express.Request, res: express.Resp
 
     // If no API key is set, return the prompt and data so the client can call the model externally
     // call the model
-    let rawOutput: string
+    let parsedAny: any
     try {
-      rawOutput = await callGenerativeModel(context_message, n)
+      parsedAny = await callGenerativeModel(context_message, n)
     } catch (err: any) {
       console.error("Model call failed:", err)
       return res.status(502).json({ error: "Model call failed", detail: String(err) })
     }
-    console.log("Model raw output:", rawOutput)
+    console.log("Model raw output:", typeof parsedAny, parsedAny)
 
-    // Try to parse the model output as JSON array
-    let parsed: any
-    try {
-      // often the model returns plain JSON array; sometimes it includes code fences - remove them
-      const cleaned = rawOutput.replace(/```json|```/g, "").trim()
-      parsed = JSON.parse(cleaned)
-      if (!Array.isArray(parsed)) {
-        throw new Error("Parsed output is not an array")
-      }
-    } catch (err) {
-      console.error("Failed to parse model output as JSON:", err, "raw:", rawOutput)
-      return res.status(502).json({
-        error: "Failed to parse model output as JSON array",
-        raw: rawOutput,
-        detail: String(err),
-      })
-    }
+    // Coerce to array: if model returned a single object, wrap it so downstream code can use .map()
+    const parsedArray: any[] = Array.isArray(parsedAny)
+      ? parsedAny
+      : parsedAny && typeof parsedAny === "object"
+      ? [parsedAny]
+      : []
 
     // Optionally: basic validation (ensure each item has at least title & ingredients)
-    const validated = parsed.map((p: any) => {
+    const validated = parsedArray.map((p: any) => {
       return {
         _raw: p,
         ok: !!p?.title && Array.isArray(p?.ingredients),
@@ -376,23 +444,14 @@ app.post("/api/generate-recipes", async (req: express.Request, res: express.Resp
 
     // Insert generated recipes into MongoDB (remove any incoming id/_id so Mongo assigns new ones)
     try {
-      // compute sequential numeric ids using an atomic counter document
-      const count = parsed.length
+      // use simple len-of-recipes + 1 strategy as requested
+      const count = parsedArray.length
       if (count > 0) {
-        if (!countersCollection) {
-          // fallback: try to get collection handle if not initialized
-          countersCollection = mongoClient!.db(DB_NAME).collection("counters")
-        }
-        // increment the sequence by the number of docs to insert
-        const seqDoc = await countersCollection.findOneAndUpdate(
-          { _id: "recipes" },
-          { $inc: { seq: count } },
-          { upsert: true, returnDocument: "after" as any }
-        )
-        const seqAfter = seqDoc?.value?.seq ?? count
-        const start = seqAfter - count + 1
+        // get current number of recipes and start from there + 1
+        const existingCount = await recipesCollection.countDocuments()
+        const start = existingCount + 1
 
-        const docsToInsert = parsed.map((p: any, i: number) => {
+        const docsToInsert = parsedArray.map((p: any, i: number) => {
           const doc: any = { ...p }
           // remove any prior id fields
           delete doc._id
@@ -407,8 +466,8 @@ app.post("/api/generate-recipes", async (req: express.Request, res: express.Resp
         // use ordered: false so one bad doc doesn't stop the rest
         const insertResult = await recipesCollection.insertMany(docsToInsert, { ordered: false })
         console.log("Inserted generated recipes:", insertResult.insertedCount)
-        // return the inserted docs (they already contain id and _id as string)
-        parsed = docsToInsert
+        // use inserted docs as the returned recipes
+        parsedAny = docsToInsert
       }
     } catch (err: any) {
       // Log insertion failures but do not fail the whole response — still return generated content
@@ -416,7 +475,9 @@ app.post("/api/generate-recipes", async (req: express.Request, res: express.Resp
     }
 
     // Return the parsed recipes (client may further validate/clean)
-    res.json({ recipes: parsed, validationSummary: validated })
+    // prefer returning the inserted docs (docsToInsert) when available, else parsedArray
+    const responseRecipes = Array.isArray(parsedAny) && parsedAny.length > 0 ? parsedAny : parsedArray
+    res.json({ recipes: responseRecipes, validationSummary: validated })
   } catch (err) {
     console.error("Error generating recipes:", err)
     res.status(500).json({ error: "Failed to generate recipes", detail: String(err) })
@@ -437,6 +498,17 @@ connectToMongo()
     process.exit(1)
   })
 
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  console.log("Shutting down...")
+  if (mongoClient) await mongoClient.close()
+  process.exit(0)
+})
+process.on("SIGTERM", async () => {
+  console.log("Shutting down...")
+  if (mongoClient) await mongoClient.close()
+  process.exit(0)
+})
 // Graceful shutdown
 process.on("SIGINT", async () => {
   console.log("Shutting down...")
