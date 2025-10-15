@@ -1,9 +1,0 @@
-{
-  "name": "my-app",
-  "version": "2.0.0",
-  "scripts": {
-    "dev": "pnpm -r dev",
-    "build": "pnpm -r build",
-    "start": "pnpm -r start"
-  }
-}

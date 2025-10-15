@@ -1,1 +1,0 @@
-# Integrate Image recognition model
