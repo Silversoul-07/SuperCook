@@ -5,9 +5,11 @@ import { cn } from "../lib/utils"
 import useSWR from "swr"
 import {type Recipe} from "@/types"
  
-// fetcher for SWR that surfaces HTTP status
+// fetcher for SWR that surfaces HTTP status and handles invalid JSON
+const API_URL = import.meta.env.VITE_API_URL
 const fetcher = async (url: string) => {
-  const res = await fetch(url)
+  const fullUrl = url.startsWith("http") ? url : `${API_URL}${url}`
+  const res = await fetch(fullUrl)
   if (!res.ok) {
     const err: any = new Error("Fetch error")
     err.status = res.status
@@ -16,7 +18,14 @@ const fetcher = async (url: string) => {
     } catch {}
     throw err
   }
-  return res.json()
+  try {
+    return await res.json()
+  } catch (e) {
+    const err: any = new Error("Invalid JSON response")
+    err.status = res.status
+    err.info = { message: "Server returned invalid JSON." }
+    throw err
+  }
 }
 
 function isString(v: any): v is string {
@@ -58,7 +67,7 @@ export default function RecipePage() {
   const { id } = useParams<{ id: string }>()
 
   // use SWR to fetch the recipe by id
-  const { data } = useSWR(id ? `/api/recipes/${id}` : null, fetcher, { suspense: true })
+  const { data, error } = useSWR(id ? `/api/recipes/${id}` : null, fetcher, { suspense: true })
 
   // servings state must be declared unconditionally (Rules of Hooks)
   const [servings, setServings] = React.useState<number>(1)
@@ -90,6 +99,17 @@ export default function RecipePage() {
       <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
           Invalid recipe data received from server.
+        </div>
+      </main>
+    )
+  }
+
+  if (error) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+          {error.message || "An error occurred while fetching the recipe."}
+          {error.info?.message && <div className="mt-2">{error.info.message}</div>}
         </div>
       </main>
     )
