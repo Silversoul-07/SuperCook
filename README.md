@@ -1,68 +1,103 @@
-# MERN Stack Template
+# Documentation
 
-<img src='https://raw.githubusercontent.com/BenElferink/mern-template/refs/heads/images/images/mern.jpeg' />
+## Overview
 
-- **M** = [MongoDB](https://www.mongodb.com)
-- **E** = [Express.js](https://expressjs.com)
-- **R** = [React.js](https://reactjs.org)
-- **N** = [Node.js](https://nodejs.org)
+Smart Recipe Generator suggests recipes from a MongoDB-backed recipe store and — when no match exists — generates new recipe ideas using an LLM. It accepts ingredients via text or image (Robolow), fetches illustrative images from Unsplash (optional), and serves a React frontend with an Express API. Frontend and backend are deployed on Vercel.
 
-<br />
+Key integrations:
 
-# What is this template?
+* **Robolow** — ingredient recognition from photos
+* **Gemini** — LLM for on-demand recipe generation (`/api/generate-recipes`)
+* **Unsplash API** — optional images for generated recipes
+* **MongoDB** — recipe storage (Atlas)
+* **MERN stack** — React front, Express/Node back, Mongoose for models
 
-This template allows you to quick-start your Fullstack application using the MERN stack, it has a server setup with some basic authentication, and a client ready to communicate with the backend.
 
-<img src='https://raw.githubusercontent.com/BenElferink/mern-template/refs/heads/images/images/preview.png' />
+# Architecture (high level)
 
-<br />
+* **Frontend (React)** — search, filters, show results, recipe page, image upload; deployed to Vercel.
+* **Backend (Express)** — REST API, matching logic, LLM orchestration, image recognition proxy, seeded recipes in MongoDB; deployed to Vercel.
+* **External services** — Robolow for CV, Gemini for text generation, Unsplash for images, MongoDB Atlas for data.
 
-# How to use this template
+#### Flow:
 
-### 1. Generate repository from template:
+1. User provides ingredients (text or image).
+2. Frontend sends `GET /api/recipes?ingredients=[...]`.
+3. Backend queries MongoDB, computes scores, returns matches.
+4. If 0 results, frontend calls `POST /api/generate-recipes` → backend calls Gemini to produce recipes, formats them, optionally persists to MongoDB, returns to frontend.
+5. For uploaded images, frontend uploads post to Roboflow → Roboflow returns canonical ingredient list for user confirmation.
 
-Click ["Use this template"](https://github.com/benelferink/mern-template/generate) to generate a
-new repo, then open your terminal and clone your new repo.
 
+# API Endpoints
+
+## GET /api/recipes
+
+Query recipes from DB with filters.
+
+* Query params: `ingredients[]`, `diet[]`, `timeMax`, `difficulty`, `limit`
+* Response: `[{recipe...}]` (sorted by match score)
+
+## POST /api/generate-recipes
+
+Generate recipes using LLM when DB has none/sparse matches.
+
+* Body: `{ ingredients: string[], dietary: string[], timeMax?: number, count?: number }`
+* Behavior: calls Gemini, validates + normalizes output, optionally saves to DB.
+* Response: `[{recipe...}]` (generated)
+
+## GET /api/recipes/:id
+
+Fetch full recipe by id.
+
+
+# Data model (essential fields)
+
+Minimal recipe shape used across the app:
+
+```ts
+type Recipe = {
+  id: string
+  title: string
+  description?: string
+  images?: string[]
+  cuisine?: string
+  ingredients: IngredientLine[]
+  instructions: string[]
+  baseServings: number
+  cookTimeMinutes?: number
+  prepTimeMinutes?: number
+  difficulty: "easy"|"medium"|"hard"
+  dietary?: string[]
+  nutrition_per_serving?: { calories:number, protein_g:number, fat_g:number, carbs_g:number }
+  ratings?: { avg:number, count:number }
+  source?: string   // "generated" or "seed" or external url
+}
 ```
-git clone https://github.com/[your_user_name]/[your_repo_name].git
-```
 
-### 2. Install dependencies:
 
-Go to the `server` folder, and run `install`.
+# Recipe matching & generation logic (brief)
 
-```
-cd ./server
-npm i
-```
+* **Matching**: backend fetches candidate recipes (e.g., `ingredient_ids: { $in: userIngredients }`), scores them by required / optional match ratios, substitution availability, dietary conflicts, and time/difficulty preferences. Returns top N with a breakdown (`matched_required`, `missing_required`, `score`).
+* **Fallback generation**: when no DB recipe meets threshold or DB returns `[]`, the frontend calls `/api/generate-recipes`. Backend composes a Gemini prompt with:
 
-Go to the `client` folder, and run `install`.
+  * user ingredients, dietary constraints, desired max time, and desired serving count.
+  * Instructs output format (JSON with fields matching your `Recipe` shape).
+* **Normalization**: parse Gemini output, validate fields (ingredients as array with quantities/units if present), map ingredient names to canonical IDs/aliases, and either return result directly or save to MongoDB (flag `source: "generated"`).
 
-```
-cd ./client
-npm i
-```
 
-### 3. Prepare MongoDB:
+# Servings & Nutrition scaling (simple rule)
 
-Prepare your MongoDB database (using [Atlas](https://www.mongodb.com/cloud/atlas),
-or [Community](<https://github.com/benelferink/mern-template/wiki/Install-MongoDB-Community-Server-(MacOS)>)). Then configure your database within `server/src/constants/index.js` (or `server/src/.env`), by configuring the `MONGO_URI` variable.
+* Store `baseServings` for each recipe and nutrition per serving or per 100g per ingredient.
+* Scale factor = `newServings / baseServings`.
+* Multiply ingredient quantities and total nutrition by scale factor. Recompute per-serving if needed.
+* For discrete items (eggs), apply rounding rules and show UX hints.
 
-### 4. Start applications:
 
-Go to the `server` folder, and run `dev`.
+# Deployment
 
-```
-cd ./server
-npm run dev
-```
+* Backend and frontend both deployed to Vercel . Backend runs as serverless functions (be mindful of execution time/size).
+* Use environment variables in Vercel dashboard:
 
-Go to the `client` folder, and run `dev`.
+  * `MONGODB_URI`, `ROBOFLOW_API_KEY`, `GEMINI_API_KEY`, `UNSPLASH_ACCESS_KEY`, `CORS_ORIGIN`, `NODE_ENV`
+* If image recognition or LLM calls are heavy/long-running, consider moving backend to Render/Railway to avoid serverless time limits.
 
-```
-cd ./client
-npm run dev
-```
-
-### 5. Happy Coding !!!
