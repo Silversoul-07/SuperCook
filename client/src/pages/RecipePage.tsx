@@ -8,7 +8,7 @@ import {type Recipe} from "@/types"
 // fetcher for SWR that surfaces HTTP status and handles invalid JSON
 const API_URL = import.meta.env.VITE_API_URL
 const fetcher = async (url: string) => {
-  const fullUrl = url.startsWith("http") ? url : `${API_URL}${url}`
+  const fullUrl = `${API_URL}${url}`
   const res = await fetch(fullUrl)
   if (!res.ok) {
     const err: any = new Error("Fetch error")
