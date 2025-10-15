@@ -21,7 +21,16 @@ import { GoogleGenAI, Type } from "@google/genai"
 
 
 const app = express()
-app.use(cors({ origin: "*" })) // Allow all origins (use specific origins in production)
+
+// Replace the simple CORS setup with a more comprehensive one
+app.use(cors({
+  origin: ['http://localhost:3000', 'https://supercook-server.vercel.app', 'https://super-cook-black.vercel.app/'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 200
+}))
+
 app.use(bodyParser.json())
 
 function matchesTerms(texts: string[], terms: string[]) {
