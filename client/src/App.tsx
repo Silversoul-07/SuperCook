@@ -117,7 +117,7 @@ export default function App() {
 
   const { data, error, isLoading, mutate } = useSWR<{ recipes: Recipe[] }, Error>(
     ["recipes-search", payload],
-    ([key, p]) => fetcher(key, p),
+    (key: [string, SearchPayload]) => fetcher(key[0], key[1]),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,

@@ -6,3 +6,5 @@ onlyBuiltDependencies:
   - '@swc/core'
   - '@tailwindcss/oxide'
   - esbuild
+
+shared-workspace-lockfile: true 

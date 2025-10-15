@@ -1,6 +1,6 @@
 // src/pages/RecipePage.tsx
 import React from "react"
-import { useParams, Link, useNavigate } from "react-router-dom"
+import { useParams, Link } from "react-router-dom"
 import { cn } from "../lib/utils"
 import useSWR from "swr"
 import {type Recipe} from "@/types"
@@ -289,7 +289,7 @@ function ServingSize({
 }: {
   caloriesPerServing: number
   servings: number
-  setServings: (n: number) => void
+  setServings: React.Dispatch<React.SetStateAction<number>>
 }) {
   const isClient = useIsClient()
   if (!isClient)
@@ -338,7 +338,7 @@ function ServingSizeClient({
 }: {
   caloriesPerServing: number
   servings: number
-  setServings: (n: number) => void
+  setServings: React.Dispatch<React.SetStateAction<number>>
 }) {
   const [mode, setMode] = React.useState<"per" | "total">("per")
   const calories = mode === "per" ? caloriesPerServing : servings * caloriesPerServing

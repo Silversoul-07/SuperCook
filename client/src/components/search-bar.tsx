@@ -6,13 +6,13 @@ export function SearchBar({
   onAddTerm,
   onRemoveTerm,
   onClearAll,
-  onSearch,
+  // onSearch,
 }: {
   terms: string[]
   onAddTerm: (term: string) => void
   onRemoveTerm: (term: string) => void
   onClearAll: () => void
-  onSearch: () => void
+  // onSearch: () => void
 }) {
   const [value, setValue] = React.useState("")
 

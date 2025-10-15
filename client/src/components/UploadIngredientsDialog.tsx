@@ -65,10 +65,12 @@ export function UploadIngredientsDialog({ onAdd }: Props) {
       console.log("Detection response:", data)
 
       // Extract the most confident prediction
-      const predictions = data.predictions || []
+      type Prediction = { confidence: number; class: string }
+      const predictions: Prediction[] = data.predictions || []
       if (predictions.length > 0) {
-        const topPrediction = predictions.reduce((best, current) =>
-          current.confidence > best.confidence ? current : best
+        const topPrediction = predictions.reduce(
+          (best: Prediction, current: Prediction) =>
+            current.confidence > best.confidence ? current : best
         )
         return topPrediction.class // Return the detected class (ingredient name)
       }
