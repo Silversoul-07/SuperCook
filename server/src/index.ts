@@ -22,14 +22,21 @@ import { GoogleGenAI, Type } from "@google/genai"
 
 const app = express()
 
-// Replace the simple CORS setup with a more comprehensive one
-app.use(cors({
-  origin: ['http://localhost:3000', 'https://supercook-server.vercel.app', 'https://super-cook-black.vercel.app/'],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+// centralize your CORS options
+const corsOptions = {
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'https://supercook-server.vercel.app',
+    'https://super-cook-black.vercel.app'
+  ],
+  methods: ['GET','POST','PUT','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization'],
   credentials: true,
   optionsSuccessStatus: 200
-}))
+}
+app.use(cors())
+// handle any preflight (OPTIONS) request and return CORS headers
 
 app.use(bodyParser.json())
 
@@ -117,8 +124,8 @@ async function connectToMongo() {
   console.log(`✅ Connected to MongoDB ${MONGO_URI} (db: ${DB_NAME}, collection: ${COLLECTION_NAME})`)
 }
 
-// Update route to fetch from MongoDB instead of RECIPES import
-app.post("/api/recipes", async (req: express.Request, res: express.Response) => {
+// extract original POST handler into a shared function
+async function handleRecipesSearch(req: express.Request, res: express.Response) {
   const body = req.body
   const terms: string[] = Array.isArray(body?.terms) ? body.terms : []
   const filters = body?.filters ?? {}
@@ -214,7 +221,11 @@ app.post("/api/recipes", async (req: express.Request, res: express.Response) => 
     console.error("Error fetching recipes:", err)
     res.status(500).json({ error: "Failed to fetch recipes" })
   }
-})
+}
+
+// register both endpoints
+app.post("/api/recipes", handleRecipesSearch)
+app.post("/api/recipes/search", handleRecipesSearch)
 
 // Add endpoint to fetch a single recipe by MongoDB _id
 app.get("/api/recipes/:id", async (req: express.Request, res: express.Response) => {
