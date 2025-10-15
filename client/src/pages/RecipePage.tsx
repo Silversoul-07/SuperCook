@@ -2,31 +2,10 @@
 import React from "react"
 import { useParams, Link } from "react-router-dom"
 import { cn } from "../lib/utils"
-import useSWR from "swr"
-import {type Recipe} from "@/types"
- 
+import { type Recipe } from "@/types"
+
 // fetcher for SWR that surfaces HTTP status and handles invalid JSON
 const API_URL = import.meta.env.VITE_API_URL
-const fetcher = async (url: string) => {
-  const fullUrl = `${API_URL}${url}`
-  const res = await fetch(fullUrl)
-  if (!res.ok) {
-    const err: any = new Error("Fetch error")
-    err.status = res.status
-    try {
-      err.info = await res.json()
-    } catch {}
-    throw err
-  }
-  try {
-    return await res.json()
-  } catch (e) {
-    const err: any = new Error("Invalid JSON response")
-    err.status = res.status
-    err.info = { message: "Server returned invalid JSON." }
-    throw err
-  }
-}
 
 function isString(v: any): v is string {
   return typeof v === "string"
@@ -65,9 +44,34 @@ function isRecipe(obj: any): obj is Recipe {
 
 export default function RecipePage() {
   const { id } = useParams<{ id: string }>()
+  const [data, setData] = React.useState<any>(null)
+  const [error, setError] = React.useState<string | null>(null)
+  const [loading, setLoading] = React.useState<boolean>(true)
 
-  // use SWR to fetch the recipe by id
-  const { data, error } = useSWR(id ? `/api/recipes/${id}` : null, fetcher, { suspense: true })
+  // Fetch the recipe by id
+  React.useEffect(() => {
+    if (!id) return
+
+    const fetchRecipe = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const res = await fetch(`${API_URL}/api/recipes/${id}`)
+        if (!res.ok) {
+          const errData = await res.json()
+          throw new Error(errData.message || "Failed to fetch recipe")
+        }
+        const json = await res.json()
+        setData(json)
+      } catch (err: any) {
+        setError(err.message || "An error occurred")
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchRecipe()
+  }, [id])
 
   // servings state must be declared unconditionally (Rules of Hooks)
   const [servings, setServings] = React.useState<number>(1)
@@ -86,12 +90,22 @@ export default function RecipePage() {
     }
   }, [data])
 
-  if (!data) {
+  if (loading) {
     // simple loading state while fetching
     return <main className="mx-auto max-w-5xl px-4 py-6">Loading...</main>
   }
 
-  const recipeRaw = data.recipe
+  if (error) {
+    return (
+      <main className="mx-auto max-w-5xl px-4 py-6">
+        <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
+          {error}
+        </div>
+      </main>
+    )
+  }
+
+  const recipeRaw = data?.recipe
 
   if (!isRecipe(recipeRaw)) {
     console.error("Fetched recipe does not match expected shape:", recipeRaw)
@@ -99,17 +113,6 @@ export default function RecipePage() {
       <main className="mx-auto max-w-5xl px-4 py-6">
         <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
           Invalid recipe data received from server.
-        </div>
-      </main>
-    )
-  }
-
-  if (error) {
-    return (
-      <main className="mx-auto max-w-5xl px-4 py-6">
-        <div className="rounded-md border border-red-300 bg-red-50 p-4 text-sm text-red-700">
-          {error.message || "An error occurred while fetching the recipe."}
-          {error.info?.message && <div className="mt-2">{error.info.message}</div>}
         </div>
       </main>
     )
