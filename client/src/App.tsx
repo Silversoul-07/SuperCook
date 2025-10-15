@@ -58,7 +58,7 @@ type SearchPayload = {
 }
 
 const fetcher = async (_key: string, payload: SearchPayload) => {
-  const res = await fetch("/api/recipes", {
+  const res = await fetch(import.meta.env.VITE_API_URL + "/api/recipes/search", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
