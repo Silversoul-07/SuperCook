@@ -21,7 +21,7 @@ import { GoogleGenAI, Type } from "@google/genai"
 
 
 const app = express()
-app.use(cors())
+app.use(cors({ origin: "*" })) // Allow all origins (use specific origins in production)
 app.use(bodyParser.json())
 
 function matchesTerms(texts: string[], terms: string[]) {
