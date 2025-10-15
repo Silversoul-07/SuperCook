@@ -152,7 +152,11 @@ async function getFoodImage(query: string): Promise<string> {
       return data.urls.regular;
     }
   } catch (err) {
-    console.error("Failed to fetch image from Unsplash:", err.message);
+    if (err instanceof Error) {
+      console.error("Failed to fetch image from Unsplash:", err.message);
+    } else {
+      console.error("Failed to fetch image from Unsplash:", err);
+    }
   }
 
   return "/placeholder.svg"; // Fallback image if API call fails
