@@ -18,6 +18,7 @@ import cors from "cors"
 import bodyParser from "body-parser"
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb" // new import
 import { GoogleGenAI, Type } from "@google/genai"
+import axios from 'axios'; // Add axios for HTTP requests
 
 
 const app = express()
@@ -122,6 +123,39 @@ async function connectToMongo() {
   recipesCollection = db.collection(COLLECTION_NAME)
   countersCollection = db.collection("counters")
   console.log(`✅ Connected to MongoDB ${MONGO_URI} (db: ${DB_NAME}, collection: ${COLLECTION_NAME})`)
+}
+
+// Function to fetch a food image URL from Unsplash
+async function getFoodImage(query: string): Promise<string> {
+  const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
+  if (!UNSPLASH_ACCESS_KEY) {
+    console.warn("Missing Unsplash API access key. Skipping image fetch.");
+    return "/placeholder.svg"; // Default placeholder image
+  }
+
+  const url = "https://api.unsplash.com/photos/random";
+  const params = {
+    query,
+    count: 1,
+    orientation: "squarish",
+  };
+  const headers = {
+    Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}`,
+  };
+
+  try {
+    const response = await axios.get(url, { headers, params });
+    const data = response.data;
+    if (Array.isArray(data) && data.length > 0) {
+      return data[0].urls.regular;
+    } else if (data.urls) {
+      return data.urls.regular;
+    }
+  } catch (err) {
+    console.error("Failed to fetch image from Unsplash:", err.message);
+  }
+
+  return "/placeholder.svg"; // Fallback image if API call fails
 }
 
 // extract original POST handler into a shared function
@@ -471,17 +505,25 @@ app.post("/api/generate-recipes", async (req: express.Request, res: express.Resp
         const existingCount = await recipesCollection.countDocuments()
         const start = existingCount + 1
 
-        const docsToInsert = parsedArray.map((p: any, i: number) => {
-          const doc: any = { ...p }
-          // remove any prior id fields
-          delete doc._id
-          delete doc.id
-          const numId = start + i
-          doc.id = numId
-          // keep _id as string of numeric id so other code expecting string _id continues to work
-          doc._id = String(numId)
-          return doc
-        })
+        const docsToInsert = await Promise.all(
+          parsedArray.map(async (p: any, i: number) => {
+            const doc: any = { ...p }
+            // remove any prior id fields
+            delete doc._id
+            delete doc.id
+            const numId = start + i
+            doc.id = numId
+            // keep _id as string of numeric id so other code expecting string _id continues to work
+            doc._id = String(numId)
+
+            // Fetch an image for the recipe title
+            if (!doc.image) {
+              doc.image = await getFoodImage(doc.title || "food");
+            }
+
+            return doc
+          })
+        )
 
         // use ordered: false so one bad doc doesn't stop the rest
         const insertResult = await recipesCollection.insertMany(docsToInsert, { ordered: false })

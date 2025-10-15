@@ -13,6 +13,7 @@
   "license": "ISC",
   "dependencies": {
     "@google/genai": "^1.24.0",
+    "axios": "^1.12.2",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "express": "^5.1.0",
@@ -29,5 +30,4 @@
     "tsx": "^4.20.6",
     "typescript": "~5.9.3"
   }
-  
 }
