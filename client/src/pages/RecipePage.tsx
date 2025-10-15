@@ -6,6 +6,7 @@ import { type Recipe } from "@/types"
 
 // fetcher for SWR that surfaces HTTP status and handles invalid JSON
 const API_URL = import.meta.env.VITE_API_URL
+console.log("API_URL:", API_URL)
 
 function isString(v: any): v is string {
   return typeof v === "string"
